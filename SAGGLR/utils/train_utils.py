@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch_geometric.data import Batch
-from torch.utils.data.dataloader import DataLoader
+from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from SAGGLR.gnn_framework.loss import loss_uncommon_node, loss_uncommon_node_local, lasso_regular_penalty, loss_node_with_group_lasso, loss_node_local, loss_node_with_sparse_group_lasso
 

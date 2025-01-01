@@ -6,7 +6,7 @@ from SAGGLR.path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, RESULT_PATH
 # Parse train only at the beginning in train_gnn.py
 # Shared parse for explain.py and train_gnn.py
 def overall_parser():
-    """Generates a parser for the arguments of the train_gnn.py, main.py, main_rf.py scripts."""
+    """Generates a parser for the arguments of the train_gnn.py, main.py scripts."""
     parser = argparse.ArgumentParser(description="Train GNN Model")
 
     parser.add_argument("--dest", type=str, default="/N/slate/zanyshi/project")
@@ -17,7 +17,7 @@ def overall_parser():
         help="if set to True, the training curves are shown on wandb",
     )
     parser.add_argument("--cuda", type=int, default=0, help="GPU device.")
-    parser.add_argument("--seed", type=int, default=1, help="seed")
+    parser.add_argument("--seed", type=int, default=1337, help="seed")
 
     # Saving paths
     parser.add_argument(
@@ -72,15 +72,15 @@ def overall_parser():
     )
     parser.add_argument(
         "--conv", type=str, default="nn", help="Type of convolutional layer."
-    )  # gine, gat, gen, nn
+    )  
     parser.add_argument(
         "--pool", type=str, default="mean", help="pool strategy."
-    )  # mean, max, add, att
+    )  
 
     # Loss type
     parser.add_argument(
         "--loss", type=str, default="MSE", help="Type of loss for training GNN."
-    )  # ['MSE', 'MSE+UCN', 'MSE++AC']
+    )  # ['MSE', 'MSE+UCN', 'MSE+AC']
     parser.add_argument(
         "--lambda1",
         type=float,
