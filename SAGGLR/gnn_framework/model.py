@@ -93,14 +93,7 @@ class GNN(torch.nn.Module):
         # Final prediction for the whole graph
         final_pred = self.final_layer(combined_emb)
         return final_pred
-        
-    '''
-    @overload
-    def forward(self, x, edge_index, edge_attr, batch):
-        node_x = self.get_node_reps(x, edge_index, edge_attr, batch)
-        graph_x = self.pool_fn(node_x, batch)
-        return self.get_pred(graph_x)
-    '''
+
 
     @overload
     def get_node_reps(self, x, edge_index, edge_attr, batch):
