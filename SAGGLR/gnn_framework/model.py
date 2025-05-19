@@ -14,7 +14,20 @@ from torch_geometric.nn import (
 from SAGGLR.utils.train_utils import overload
 
 
-class GNN(torch.nn.Module):
+class GNN(nn.Module):
+    """
+    Graph Neural Network for node classification/regression tasks.
+
+    Args:
+        num_node_features (int): Size of node feature vectors.
+        num_edge_features (int): Size of edge feature vectors.
+        hidden_dim (int): Hidden dimension for embeddings and layers.
+        mask_dim (int): Dimension for mask layers.
+        num_layers (int): Number of graph convolution layers.
+        num_classes (int): Output dimension (number of target classes).
+        conv_name (str): Type of graph convolution ('nn', 'gine', 'gat', 'gen').
+        pool (str): Global pooling method ('mean', 'max', 'add', 'att', 'mean+att').
+    """
     def __init__(
         self,
         num_node_features: int,
@@ -23,63 +36,101 @@ class GNN(torch.nn.Module):
         mask_dim: int = 16,
         num_layers: int = 2,
         num_classes: int = 1,
-        conv_name: str = "nn",
-        pool: str = "mean",
+        conv_name: str = 'nn',
+        pool: str = 'mean'
     ):
         super().__init__()
-        (
-            self.num_node_features,
-            self.num_edge_features,
-            self.num_classes,
-            self.num_layers,
-            self.hidden_dim,
-            self.mask_dim,
-        ) = (
-            num_node_features,
-            num_edge_features,
-            num_classes,
-            num_layers,
-            hidden_dim,
-            mask_dim,
-        )
         
-        self.node_emb = nn.Linear(self.num_node_features, self.hidden_dim)
-        self.edge_emb = nn.Linear(self.num_edge_features, self.hidden_dim)
+        # Save hyperparameters
+        self.hidden_dim = hidden_dim
+        self.mask_dim = mask_dim
+        self.num_layers = num_layers
+        self.num_classes = num_classes
 
-        self.convs = ModuleList()
-        self.batch_norms = ModuleList()
-        self.relus = ModuleList()
+        # Embedding layers
+        self.node_emb = nn.Linear(num_node_features, hidden_dim)
+        self.edge_emb = nn.Linear(num_edge_features, hidden_dim)
 
-        for i in range(self.num_layers):
-            if conv_name == "nn":
-                conv = NNConv(
-                    self.hidden_dim,
-                    self.hidden_dim,
-                    nn = nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim * self.hidden_dim)),
+        # Build graph convolution, normalization, and activation blocks
+        self.convs, self.batch_norms, self.activations = self._build_conv_blocks(conv_name)
+
+        # Prediction layers for common and uncommon subgraphs
+        self.lin_common_pred   = nn.Linear(hidden_dim, num_classes)
+        self.lin_uncommon_pred = nn.Linear(hidden_dim, num_classes)
+
+        # Masking layers
+        self.lin_common_layer   = nn.Linear(hidden_dim, mask_dim)
+        self.lin_uncommon_layer = nn.Linear(hidden_dim, mask_dim)
+        self.final_layer        = nn.Linear(2 * mask_dim, num_classes)
+
+        # Uncommon-only path prediction
+        self.lin1 = nn.Linear(hidden_dim, num_classes)
+
+        # Pooling setup
+        self.pool, self.pool_fn = self._get_pool_fn(pool)
+
+    def _build_conv_blocks(self, conv_name: str):
+        """
+        Create graph convolution layers with matching normalization and activation.
+        """
+        convs = nn.ModuleList()
+        norms = nn.ModuleList()
+        activations = nn.ModuleList()
+        for _ in range(self.num_layers):
+            convs.append(self._create_conv_layer(conv_name))
+            norms.append(BatchNorm(self.hidden_dim))
+            activations.append(nn.ReLU())
+
+        return convs, norms, activations
+
+    def _create_conv_layer(self, conv_name: str) -> nn.Module:
+        """
+        Return a graph convolution layer based on conv_name.
+        """
+        if conv_name == 'nn':
+            gate_nn = nn.Sequential(
+                nn.Linear(self.hidden_dim, self.hidden_dim * self.hidden_dim)
+            )
+            return NNConv(self.hidden_dim, self.hidden_dim, nn=gate_nn)
+        elif conv_name == 'gine':
+            return GINEConv(
+                nn.Sequential(
+                    nn.Linear(self.hidden_dim, 2 * self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(2 * self.hidden_dim, self.hidden_dim)
                 )
-            else:
-                raise ValueError(f"Unknown convolutional layer {conv_name}")
-            self.convs.append(conv)
-            self.batch_norms.append(BatchNorm(self.hidden_dim))
-            self.relus.append(ReLU())
-
-        # Prediction of nn.Linear layers for common and uncommon subgraphs
-        self.lin_common_pred = nn.Linear(self.hidden_dim, self.num_classes)
-        self.lin_uncommon_pred = nn.Linear(self.hidden_dim, self.num_classes)   
-        
-        
-        # Separate linear layers for common and uncommon subgraphs
-        self.lin_common_layer = nn.Linear(self.hidden_dim, self.mask_dim)
-        self.lin_uncommon_layer = nn.Linear(self.hidden_dim, self.mask_dim)
-        self.final_layer = nn.Linear(2 * self.mask_dim, self.num_classes)
-        # If only use the uncommon nodes
-        self.lin1 = nn.Linear(self.hidden_dim, self.num_classes)
-
-        self.pool = pool
-        if  self.pool == "mean":
-            self.pool_fn = global_mean_pool
+            )
+        elif conv_name == 'gat':
+            return GATConv(self.hidden_dim, self.hidden_dim, edge_dim=self.hidden_dim, concat=False)
+        elif conv_name == 'gen':
+            return GENConv(self.hidden_dim, self.hidden_dim)
         else:
-            raise ValueError(f"Unknown pool {self.pool}")
+            raise ValueError(f"Unsupported conv_name: {conv_name}")
+
+    def _get_pool_fn(self, pool: str):
+        """
+        Return the appropriate pooling function (and supplementary for 'mean+att').
+        """
+        if pool == 'att':
+            pool_fn = AttentionalAggregation(
+                gate_nn=nn.Sequential(nn.Linear(self.hidden_dim, 1)),
+                nn=nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim))
+            )
+        elif pool == 'mean':
+            pool_fn = global_mean_pool
+        elif pool == 'max':
+            pool_fn = global_max_pool
+        elif pool == 'add':
+            pool_fn = global_add_pool
+        elif pool == 'mean+att':
+            pool_fn = global_mean_pool
+            self.pool_fn_ucn = AttentionalAggregation(
+                gate_nn=nn.Sequential(nn.Linear(self.hidden_dim, 1)),
+                nn=nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim))
+            )
+        else:
+            raise ValueError(f"Unsupported pool: {pool}")
+        return pool, pool_fn
 
 
     @overload
