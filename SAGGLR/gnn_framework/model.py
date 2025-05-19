@@ -5,11 +5,10 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.nn import ModuleList, ReLU
-from torch.nn import Sequential as Seq
+from torch_geometric.nn import NNConv, GINEConv, GATConv, GENConv
 from torch_geometric.nn import (
-    BatchNorm,
-    NNConv,
-    global_mean_pool,
+    global_mean_pool, global_max_pool, global_add_pool,
+    AttentionalAggregation, BatchNorm
 )
 from SAGGLR.utils.train_utils import overload
 
