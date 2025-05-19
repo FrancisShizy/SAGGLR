@@ -2,8 +2,8 @@ from typing import List
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.autograd import Variable
-from torch.nn import Linear as Lin
 from torch.nn import ModuleList, ReLU
 from torch.nn import Sequential as Seq
 from torch_geometric.nn import (
@@ -43,8 +43,8 @@ class GNN(torch.nn.Module):
             mask_dim,
         )
         
-        self.node_emb = Lin(self.num_node_features, self.hidden_dim)
-        self.edge_emb = Lin(self.num_edge_features, self.hidden_dim)
+        self.node_emb = nn.Linear(self.num_node_features, self.hidden_dim)
+        self.edge_emb = nn.Linear(self.num_edge_features, self.hidden_dim)
 
         self.convs = ModuleList()
         self.batch_norms = ModuleList()
@@ -55,7 +55,7 @@ class GNN(torch.nn.Module):
                 conv = NNConv(
                     self.hidden_dim,
                     self.hidden_dim,
-                    nn=Seq(Lin(self.hidden_dim, self.hidden_dim * self.hidden_dim)),
+                    nn = nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim * self.hidden_dim)),
                 )
             else:
                 raise ValueError(f"Unknown convolutional layer {conv_name}")
@@ -63,17 +63,17 @@ class GNN(torch.nn.Module):
             self.batch_norms.append(BatchNorm(self.hidden_dim))
             self.relus.append(ReLU())
 
-        # Prediction of linear layers for common and uncommon subgraphs
-        self.lin_common_pred = Lin(self.hidden_dim, self.num_classes)
-        self.lin_uncommon_pred = Lin(self.hidden_dim, self.num_classes)   
+        # Prediction of nn.Linear layers for common and uncommon subgraphs
+        self.lin_common_pred = nn.Linear(self.hidden_dim, self.num_classes)
+        self.lin_uncommon_pred = nn.Linear(self.hidden_dim, self.num_classes)   
         
         
         # Separate linear layers for common and uncommon subgraphs
-        self.lin_common_layer = Lin(self.hidden_dim, self.mask_dim)
-        self.lin_uncommon_layer = Lin(self.hidden_dim, self.mask_dim)
-        self.final_layer = Lin(2 * self.mask_dim, self.num_classes)
+        self.lin_common_layer = nn.Linear(self.hidden_dim, self.mask_dim)
+        self.lin_uncommon_layer = nn.Linear(self.hidden_dim, self.mask_dim)
+        self.final_layer = nn.Linear(2 * self.mask_dim, self.num_classes)
         # If only use the uncommon nodes
-        self.lin1 = Lin(self.hidden_dim, self.num_classes)
+        self.lin1 = nn.Linear(self.hidden_dim, self.num_classes)
 
         self.pool = pool
         if  self.pool == "mean":
@@ -299,7 +299,7 @@ class GNN(torch.nn.Module):
             if is_uncommon:    
                 graph_pred = self.lin_uncommon_pred(graph_x)
             else:
-                graph_pred = self.lin_common_pred(graph_x) # Lin(graph_x, self.hidden_dim, self.num_classes).
+                graph_pred = self.lin_common_pred(graph_x) # nn.Linear(graph_x, self.hidden_dim, self.num_classes).
         else:
             if is_uncommon:    
                 graph_pred = self.lin_uncommon_layer(graph_x)
