@@ -150,7 +150,7 @@ class GNN(nn.Module):
         """Returns the node embeddings just before the pooling layer."""
         x = self.node_emb(x)
         edge_attr = self.edge_emb(edge_attr)
-        for conv, batch_norm, relu in zip(self.convs, self.batch_norms, self.relus):
+        for conv, batch_norm, relu in zip(self.convs, self.batch_norms, self.activations):
             x = conv(x, edge_index, edge_attr)
             x = relu(batch_norm(x))
         node_x = x
@@ -195,7 +195,7 @@ class GNN(nn.Module):
         edge_attr.retain_grad()
         acts.append((x, edge_attr))
 
-        for conv, batch_norm, relu in zip(self.convs, self.batch_norms, self.relus):
+        for conv, batch_norm, relu in zip(self.convs, self.batch_norms, self.activations):
             x = conv(x, data.edge_index, edge_attr)
             x = relu(batch_norm(x))
             x.retain_grad()
