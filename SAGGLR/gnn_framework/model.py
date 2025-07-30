@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
-from torch.nn import ModuleList, ReLU
 from torch_geometric.nn import NNConv, GINEConv, GATConv, GENConv
 from torch_geometric.nn import (
     global_mean_pool, global_max_pool, global_add_pool,
@@ -130,7 +129,7 @@ class GNN(nn.Module):
         else:
             raise ValueError(f"Unsupported pool: {pool}")
         return pool, pool_fn
-
+        
 
     @overload
     def forward(self, data: torch.Tensor, is_pred = False):
@@ -143,7 +142,14 @@ class GNN(nn.Module):
         # Final prediction for the whole graph
         final_pred = self.final_layer(combined_emb)
         return final_pred
-
+        
+    '''
+    @overload
+    def forward(self, x, edge_index, edge_attr, batch):
+        node_x = self.get_node_reps(x, edge_index, edge_attr, batch)
+        graph_x = self.pool_fn(node_x, batch)
+        return self.get_pred(graph_x)
+    '''
 
     @overload
     def get_node_reps(self, x, edge_index, edge_attr, batch):
@@ -349,7 +355,7 @@ class GNN(nn.Module):
             if is_uncommon:    
                 graph_pred = self.lin_uncommon_pred(graph_x)
             else:
-                graph_pred = self.lin_common_pred(graph_x) # nn.Linear(graph_x, self.hidden_dim, self.num_classes).
+                graph_pred = self.lin_common_pred(graph_x) # Lin(graph_x, self.hidden_dim, self.num_classes).
         else:
             if is_uncommon:    
                 graph_pred = self.lin_uncommon_layer(graph_x)

@@ -6,7 +6,7 @@ from torch import nn
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from SAGGLR.gnn_framework.loss import loss_uncommon_node, loss_uncommon_node_local, lasso_regular_penalty, loss_node_with_group_lasso, loss_node_local, loss_node_with_sparse_group_lasso
+from SAGGLR.gnn_framework.loss import loss_uncommon_node, loss_common_node, lasso_regular_penalty, loss_node_with_group_lasso, loss_node_local, loss_node_with_sparse_group_lasso
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -52,43 +52,49 @@ def train_epoch(
         loss = (mse_i + mse_j) / 2
 
         # Additional loss calculations based on loss_type
-        if loss_type == "MSE+UCNlocal":
-            loss_batch, n_subs_in_batch = loss_node_local(
-                data_i, data_j, model
-            )
-            loss += lambda1 * loss_batch
-            # argue whether to use regularization
+        if loss_type == "MSE": # only considering MSE of predicted vs. true activity scores
             if regularization:
                 loss += lambda_MSE * lasso_regular_penalty(model, final_layer_params)
-
-            loss.backward()
-            loss_all += loss.item() * n_subs_in_batch
-
-            optimizer.step()
-            progress.set_postfix({"loss": loss.item()})
-            total += n_subs_in_batch
+            else:
+                pass
         else:
-            if loss_type == "MSE+AC":
-                loss += MSE_LOSS_FN(
-                    out_i - out_j, data_i.y.to(DEVICE) - data_j.y.to(DEVICE)
-                )
+            if loss_type == "MSE+UCN": # considering MSE & uncommon node information
+                loss += lambda1 * loss_uncommon_node(data_i, data_j, model)
+            elif loss_type == "MSE+N": # considering MSE & all node information
                 if regularization:
-                    loss += lambda_MSE * lasso_regular_penalty(model, final_layer_params)
-            elif loss_type == "MSE+N":
-                if regularization:
-                    if Sparse:
+                    if Sparse: # sparse group lasso 
                         loss += loss_node_with_sparse_group_lasso(data_i, data_j, model, lambda_group, common_group_params, uncommon_group_params, alpha)
                         loss += alpha * lambda_group * lasso_regular_penalty(model, common_group_params)
                         loss += alpha * lambda_group * lasso_regular_penalty(model, uncommon_group_params)
                         # loss += lambda_group * lasso_regular_penalty(model, final_layer_params)
-                    else:
+                    else: # group lasso
                         loss += loss_node_with_group_lasso(data_i, data_j, model, lambda_group, common_group_params, uncommon_group_params)
-                else:
-                    loss += lambda1 * loss_uncommon_node(data_i, data_j, model)
-            elif loss_type == "MSE":
-                if regularization:
-                    loss += lambda_MSE * lasso_regular_penalty(model, final_layer_params)
+                else: # no group lasso
+                    loss += lambda1 * loss_common_node(data_i, data_j, model)
+            elif loss_type == "MSE+AC":
+                    loss += MSE_LOSS_FN(
+                        out_i - out_j, data_i.y.to(DEVICE) - data_j.y.to(DEVICE)
+                    )
+                    if regularization:
+                        loss += lambda_MSE * lasso_regular_penalty(model, final_layer_params)
+            elif loss_type == "MSE+UCNlocal":
+                    loss_batch, n_subs_in_batch = loss_node_local(
+                        data_i, data_j, model
+                    )
+                    loss += lambda1 * loss_batch
+                    # argue whether to use regularization
+                    if regularization:
+                        loss += lambda_MSE * lasso_regular_penalty(model, final_layer_params)
 
+                    loss.backward()
+                    loss_all += loss.item() * n_subs_in_batch
+
+                    optimizer.step()
+                    progress.set_postfix({"loss": loss.item()})
+                    total += n_subs_in_batch
+            else: 
+                AssertionError("Please provide correct loss fuctions from MSE, MSE+UCN, MSE+N, or MSE+AC, etc.")
+        
         loss.backward()
         optimizer.step()
         loss_all += loss.item() * (data_i.num_graphs if hasattr(data_i, 'num_graphs') else 1)

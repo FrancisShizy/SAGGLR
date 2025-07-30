@@ -1,6 +1,6 @@
 import argparse
 
-from SAGGLR.path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, RESULT_PATH
+from SAGGLR.path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, RESULT_PATH, CV_PATH
 
 
 # Parse train only at the beginning in train_gnn.py
@@ -9,15 +9,8 @@ def overall_parser():
     """Generates a parser for the arguments of the train_gnn.py, main.py scripts."""
     parser = argparse.ArgumentParser(description="Train GNN Model")
 
-    parser.add_argument("--dest", type=str, default="/N/slate/zanyshi/project")
-    parser.add_argument(
-        "--wandb",
-        type=str,
-        default="False",
-        help="if set to True, the training curves are shown on wandb",
-    )
     parser.add_argument("--cuda", type=int, default=0, help="GPU device.")
-    parser.add_argument("--seed", type=int, default=1337, help="seed")
+    parser.add_argument("--seed", type=int, default=123, help="seed")
 
     # Saving paths
     parser.add_argument(
@@ -36,6 +29,12 @@ def overall_parser():
         help="path for saving gnn scores (rmse, pcc).",
     )
     parser.add_argument(
+        "--cv_path",
+        nargs="?",
+        default=CV_PATH,
+        help="path for saving cross-validation results (rmse, pcc).",
+    )
+    parser.add_argument(
         "-color_path",
         nargs="?",
         default=COLOR_PATH,
@@ -51,7 +50,7 @@ def overall_parser():
 
     # Choose protein target
     parser.add_argument(
-        "--target", type=str, default="1D3G-BRE", help="Protein target."
+        "--target", type=str, default="1O42-843", help="Protein target."
     )
 
     # Model parameters
@@ -71,16 +70,16 @@ def overall_parser():
         help="number of neurons in mask layer",
     )
     parser.add_argument(
-        "--conv", type=str, default="nn", help="Type of convolutional layer."
+        "--conv", type=str, default="nn", help="Type of convolutional layer." # Type of graph convolution ('nn', 'gine', 'gat', 'gen')
     )  
     parser.add_argument(
-        "--pool", type=str, default="mean", help="pool strategy."
+        "--pool", type=str, default="mean", help="pool strategy." # Global pooling method ('mean', 'max', 'add', 'att', 'mean+att').
     )  
 
     # Loss type
     parser.add_argument(
         "--loss", type=str, default="MSE", help="Type of loss for training GNN."
-    )  # ['MSE', 'MSE+UCN', 'MSE+AC']
+    )  # ['MSE', 'MSE+UCN']
     parser.add_argument(
         "--lambda1",
         type=float,
@@ -120,10 +119,19 @@ def overall_parser():
         "--val_set_size", type=float, default=0.1, help="validation set size (ratio)"
     )
 
+    # k-fold cross-validation
+    parser.add_argument(
+        "--k_folds", type=int, default=5, help="k-fold cross-validation"
+    )
+    parser.add_argument(
+        "--loss_setting_list", type=int, default=["MSE", "MSE+UCN", "MSE+N", "MSE+AC"], help="Loss setting list for cross-validation comparation"
+    )
+
+
     # GNN training parameters
-    parser.add_argument("--epoch", type=int, default=200, help="Number of epoch.")
-    parser.add_argument("--lr", type=float, default=0.005, help="Learning rate.")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
+    parser.add_argument("--epoch", type=int, default=300, help="Number of epoch.")
+    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate.")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
     parser.add_argument(
         "--verbose", type=int, default=10, help="Interval of evaluation."
     )

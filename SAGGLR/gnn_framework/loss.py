@@ -32,53 +32,34 @@ def loss_uncommon_node(
     return loss
 
 
-def loss_uncommon_node_local(
-    data_i: Tensor, data_j: Tensor, model: nn.Module, reduction: str = "mean"
-) -> Tensor:
+def loss_common_node(data_i: Tensor, data_j: Tensor, model: nn.Module, reduction: str="mean") -> Tensor:
     """
-    Compute the loss that correlates decoration embeddings and activity cliff at individual site of the decorations.
-    get_common_nodes: Get the common nodes between two graphs and their mapping to the same indexing
-    get_substituents: Get the substituents and the active sites of the scaffold.
-    get_positions: Map active sites on the scaffold to the index of the substituent attached to it.
+    compute the loss that coreelates both common and uncommon decoration embeddings with the activity cliff.
     """
-    idx_common_i, idx_common_j, map_i, map_j = get_common_nodes(
-        data_i.mask.cpu(), data_j.mask.cpu()
-    )
-
-    subs_i, as_i = get_substituents(data_i, idx_common_i, map_i)
-    pos_sub_i = get_positions(subs_i, idx_common_i, map_i)
-
-    subs_j, as_j = get_substituents(data_j, idx_common_j, map_j)
-    pos_sub_j = get_positions(subs_j, idx_common_j, map_j)
-
-    cmn_sites = np.unique(np.concatenate([as_i, as_j]))
-    loss = []
-    pos_sub_filtered_i = {k: v for k, v in pos_sub_i.items() if k in cmn_sites}
-    pos_sub_filtered_j = {k: v for k, v in pos_sub_j.items() if k in cmn_sites}
+    emb_i_uncommon, emb_i_common = model.get_graph_representations(data_i, is_pred = True)
+    emb_j_uncommon, emb_j_common = model.get_graph_representations(data_j, is_pred = True)
     
-    for site in cmn_sites:
+    # Compute deltas for both uncommon and common represenations
+    delta_emb_uncommon = torch.squeeze(emb_i_uncommon) - torch.squeeze(emb_j_uncommon)
+    delta_emb_common = torch.squeeze(emb_i_common) - torch.squeeze(emb_j_common)
+    
+    # Ensure they are not zero-dimensional.
+    if delta_emb_uncommon.dim() == 0:
+        delta_emb_uncommon = delta_emb_uncommon.unsqueeze(0)
+    if delta_emb_common.dim() == 0:
+        delta_emb_common = delta_emb_common.unsqueeze(0)
+    
+    # Compute the delta for the target values.
+    delta_y = data_i.y - data_j.y
+    
+    # Compute the loss for both uncommon and common representations.
+    loss_uncommon = F.mse_loss(delta_emb_uncommon, delta_y, reduction=reduction)
+    loss_common = F.mse_loss(delta_emb_common, delta_y, reduction=reduction)
 
-        if pos_sub_filtered_i[site] == -1:
-            emb_i = torch.zeros(1).to(data_i.x.device)
-        else:
-            sub = subs_i[pos_sub_filtered_i[site]]
-            emb_i = model.get_substituent_rep(sub, data_i)
-
-        if pos_sub_filtered_j[site] == -1:
-            emb_j = torch.zeros(1).to(data_j.x.device)
-        else:
-            sub = subs_j[pos_sub_filtered_j[site]]
-            emb_j = model.get_substituent_rep(sub, data_j)
-
-        batch_i, a_i = get_substituent_info(site, data_i, map_i)
-        batch_j, a_j = get_substituent_info(site, data_j, map_j)
-        
-        loss.append(
-            F.mse_loss(
-                torch.squeeze(emb_i - emb_j), a_i - a_j, reduction=reduction
-            ).item()
-        )
-    return np.mean(loss), len(cmn_sites)
+    # Combine the losses.
+    loss = loss_uncommon + loss_common 
+    
+    return loss
 
 
 def loss_activity_cliff(
@@ -93,6 +74,14 @@ def loss_activity_cliff(
     """
     loss = F.mse_loss(input_i - input_j, target_i - target_j, reduction=reduction)
     return loss
+
+
+def lasso_regular_penalty(model, param_name):
+    lasso_reg = torch.tensor(0.).to(DEVICE)
+    for name, param in model.named_parameters():
+        if name in param_name:
+            lasso_reg += torch.norm(param, 1)
+    return lasso_reg
 
 
 def group_lasso_penalty(model, group_params, lambda_group_lasso):
@@ -153,14 +142,6 @@ def loss_node_with_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module,
     loss = loss_uncommon + loss_common + group_lasso_common + group_lasso_uncommon
     
     return loss
-     
-
-def lasso_regular_penalty(model, param_name):
-    lasso_reg = torch.tensor(0.).to(DEVICE)
-    for name, param in model.named_parameters():
-        if name in param_name:
-            lasso_reg += torch.norm(param, 1)
-    return lasso_reg
 
 
 def loss_node_with_sparse_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module, lambda_group_lasso,
@@ -197,6 +178,54 @@ def loss_node_with_sparse_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.
     
     return loss
      
+
+def loss_uncommon_node_local(
+    data_i: Tensor, data_j: Tensor, model: nn.Module, reduction: str = "mean"
+) -> Tensor:
+    """
+    Compute the loss that correlates decoration embeddings and activity cliff at individual site of the decorations.
+    get_common_nodes: Get the common nodes between two graphs and their mapping to the same indexing
+    get_substituents: Get the substituents and the active sites of the scaffold.
+    get_positions: Map active sites on the scaffold to the index of the substituent attached to it.
+    """
+    idx_common_i, idx_common_j, map_i, map_j = get_common_nodes(
+        data_i.mask.cpu(), data_j.mask.cpu()
+    )
+
+    subs_i, as_i = get_substituents(data_i, idx_common_i, map_i)
+    pos_sub_i = get_positions(subs_i, idx_common_i, map_i)
+
+    subs_j, as_j = get_substituents(data_j, idx_common_j, map_j)
+    pos_sub_j = get_positions(subs_j, idx_common_j, map_j)
+
+    cmn_sites = np.unique(np.concatenate([as_i, as_j]))
+    loss = []
+    pos_sub_filtered_i = {k: v for k, v in pos_sub_i.items() if k in cmn_sites}
+    pos_sub_filtered_j = {k: v for k, v in pos_sub_j.items() if k in cmn_sites}
+    
+    for site in cmn_sites:
+
+        if pos_sub_filtered_i[site] == -1:
+            emb_i = torch.zeros(1).to(data_i.x.device)
+        else:
+            sub = subs_i[pos_sub_filtered_i[site]]
+            emb_i = model.get_substituent_rep(sub, data_i)
+
+        if pos_sub_filtered_j[site] == -1:
+            emb_j = torch.zeros(1).to(data_j.x.device)
+        else:
+            sub = subs_j[pos_sub_filtered_j[site]]
+            emb_j = model.get_substituent_rep(sub, data_j)
+
+        batch_i, a_i = get_substituent_info(site, data_i, map_i)
+        batch_j, a_j = get_substituent_info(site, data_j, map_j)
+        
+        loss.append(
+            F.mse_loss(
+                torch.squeeze(emb_i - emb_j), a_i - a_j, reduction=reduction
+            ).item()
+        )
+    return np.mean(loss), len(cmn_sites)
 
 
 def loss_node_local(
