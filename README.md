@@ -1,6 +1,6 @@
 # SAGGLR
 Structure-Aware Compound-Protein Affinity Prediction via Graph Neural Network with Group Lasso Regularization
-![Fig1_illustration](https://github.com/user-attachments/assets/c95fdc54-8006-4690-a025-c1584d0f25e5)
+<img width="5315" height="2717" alt="Fig1_illustration_new" src="https://github.com/user-attachments/assets/a9c1512d-5d99-4b93-9bcb-9425d08cfd63" />
 
 # How to use
 ```ruby
