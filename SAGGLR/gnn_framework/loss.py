@@ -11,8 +11,8 @@ from SAGGLR.utils.utils import (
     get_substituents,
     get_nodes,
 )
-
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+from SAGGLR.utils.device import DEVICE
+# DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def loss_uncommon_node(
     data_i: Tensor, data_j: Tensor, model: nn.Module, reduction: str = "mean"
@@ -206,13 +206,13 @@ def loss_uncommon_node_local(
     for site in cmn_sites:
 
         if pos_sub_filtered_i[site] == -1:
-            emb_i = torch.zeros(1).to(data_i.x.device)
+            emb_i = torch.zeros(1).to(DEVICE)
         else:
             sub = subs_i[pos_sub_filtered_i[site]]
             emb_i = model.get_substituent_rep(sub, data_i)
 
         if pos_sub_filtered_j[site] == -1:
-            emb_j = torch.zeros(1).to(data_j.x.device)
+            emb_j = torch.zeros(1).to(DEVICE)
         else:
             sub = subs_j[pos_sub_filtered_j[site]]
             emb_j = model.get_substituent_rep(sub, data_j)
@@ -259,13 +259,13 @@ def loss_node_local(
     for site in cmn_sites:
 
         if pos_sub_filtered_i[site] == -1:
-            emb_i = torch.zeros(1).to(data_i.x.device)
+            emb_i = torch.zeros(1).to(DEVICE)
         else:
             sub = subs_i[pos_sub_filtered_i[site]]
             emb_i = model.get_substituent_rep(sub, data_i)
 
         if pos_sub_filtered_j[site] == -1:
-            emb_j = torch.zeros(1).to(data_j.x.device)
+            emb_j = torch.zeros(1).to(DEVICE)
         else:
             sub = subs_j[pos_sub_filtered_j[site]]
             emb_j = model.get_substituent_rep(sub, data_j)
@@ -278,7 +278,7 @@ def loss_node_local(
                 torch.squeeze(emb_i - emb_j), a_i - a_j, reduction=reduction
             ).item()
         )
-        
+  
     #print(idx_common_i)
     #print(idx_uncommon_i)    
     #print(subs_i)

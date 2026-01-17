@@ -1,15 +1,15 @@
 from typing import List
-
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
-from torch_geometric.nn import NNConv, GINEConv, GATConv, GENConv
+from torch_geometric.nn import NNConv, GCNConv, GINConv, GINEConv, GATConv, GENConv
 from torch_geometric.nn import (
     global_mean_pool, global_max_pool, global_add_pool,
     AttentionalAggregation, BatchNorm
 )
-from SAGGLR.utils.train_utils import overload
+from SAGGLR.utils.train_utils import DEVICE, overload
 
 
 class GNN(nn.Module):
@@ -30,7 +30,10 @@ class GNN(nn.Module):
         self,
         num_node_features: int,
         num_edge_features: int,
-        hidden_dim: int = 32,
+        hidden_dim_embed: int = 32,
+        hidden_dim_gnn: int = 32,
+        hidden_dim_mlp: list = [32, 16],
+        hidden_dim_linear: int = 32,
         mask_dim: int = 16,
         num_layers: int = 2,
         num_classes: int = 1,
@@ -40,32 +43,47 @@ class GNN(nn.Module):
         super().__init__()
         
         # Save hyperparameters
-        self.hidden_dim = hidden_dim
+        self.hidden_dim_embed = hidden_dim_embed
+        self.hidden_dim_gnn = hidden_dim_gnn
+        self.hidden_dim_mlp = hidden_dim_mlp
+        self.hidden_dim_linear = hidden_dim_linear
         self.mask_dim = mask_dim
         self.num_layers = num_layers
         self.num_classes = num_classes
 
         # Embedding layers
-        self.node_emb = nn.Linear(num_node_features, hidden_dim)
-        self.edge_emb = nn.Linear(num_edge_features, hidden_dim)
-
+        self.node_emb = nn.Linear(num_node_features, hidden_dim_embed)
+        self.edge_emb = nn.Linear(num_edge_features, hidden_dim_embed)
         # Build graph convolution, normalization, and activation blocks
         self.convs, self.batch_norms, self.activations = self._build_conv_blocks(conv_name)
 
-        # Prediction layers for common and uncommon subgraphs
-        self.lin_common_pred   = nn.Linear(hidden_dim, num_classes)
-        self.lin_uncommon_pred = nn.Linear(hidden_dim, num_classes)
-
-        # Masking layers
-        self.lin_common_layer   = nn.Linear(hidden_dim, mask_dim)
-        self.lin_uncommon_layer = nn.Linear(hidden_dim, mask_dim)
-        self.final_layer        = nn.Linear(2 * mask_dim, num_classes)
-
-        # Uncommon-only path prediction
-        self.lin1 = nn.Linear(hidden_dim, num_classes)
-
         # Pooling setup
         self.pool, self.pool_fn = self._get_pool_fn(pool)
+
+        # Prediction layers for common and uncommon subgraphs
+        self.lin_common_pred = nn.Linear(hidden_dim_gnn, num_classes)
+        self.lin_uncommon_pred = nn.Linear(hidden_dim_gnn, num_classes)
+        # Uncommon-only path prediction
+        self.lin1 = nn.Linear(hidden_dim_gnn, num_classes)
+
+        # Masking layers
+        mask_in_dim = self.hidden_dim_gnn
+        self.lin_common_layer = self._build_mlp(
+            in_dim=mask_in_dim,
+            hidden_dims=self.hidden_dim_mlp,   # e.g., [32, 16] means 32->32->16->mask_dim if mask_in_dim=32
+            out_dim=self.mask_dim,
+            dropout=0.0,
+            last_activation=False,
+        )
+        self.lin_uncommon_layer = self._build_mlp(
+            in_dim=mask_in_dim,
+            hidden_dims=self.hidden_dim_mlp,
+            out_dim=self.mask_dim,
+            dropout=0.0,
+            last_activation=False,
+        )
+        self.final_layer = nn.Linear(2 * self.mask_dim, self.num_classes)
+
 
     def _build_conv_blocks(self, conv_name: str):
         """
@@ -76,7 +94,7 @@ class GNN(nn.Module):
         activations = nn.ModuleList()
         for _ in range(self.num_layers):
             convs.append(self._create_conv_layer(conv_name))
-            norms.append(BatchNorm(self.hidden_dim))
+            norms.append(BatchNorm(self.hidden_dim_gnn))
             activations.append(nn.ReLU())
 
         return convs, norms, activations
@@ -87,21 +105,39 @@ class GNN(nn.Module):
         """
         if conv_name == 'nn':
             gate_nn = nn.Sequential(
-                nn.Linear(self.hidden_dim, self.hidden_dim * self.hidden_dim)
+                nn.Linear(self.hidden_dim_gnn, self.hidden_dim_gnn * self.hidden_dim_gnn)
             )
-            return NNConv(self.hidden_dim, self.hidden_dim, nn=gate_nn)
+            return NNConv(self.hidden_dim_gnn, self.hidden_dim_gnn, nn=gate_nn)
+        elif conv_name == 'gcn':
+            return GCNConv(
+                self.hidden_dim_gnn,
+                self.hidden_dim_gnn,
+                add_self_loops=True,
+                normalize=True
+            )
         elif conv_name == 'gine':
             return GINEConv(
                 nn.Sequential(
-                    nn.Linear(self.hidden_dim, 2 * self.hidden_dim),
+                    nn.Linear(self.hidden_dim_gnn, 2 * self.hidden_dim_gnn),
                     nn.ReLU(),
-                    nn.Linear(2 * self.hidden_dim, self.hidden_dim)
+                    nn.Linear(2 * self.hidden_dim_gnn, self.hidden_dim_gnn)
                 )
             )
+        elif conv_name == 'gin':
+            mlp = nn.Sequential(
+                nn.Linear(self.hidden_dim_gnn, 2 * self.hidden_dim_gnn),
+                nn.ReLU(),
+                nn.Linear(2 * self.hidden_dim_gnn, self.hidden_dim_gnn),
+            )
+            return GINConv(
+                nn=mlp,
+                eps=0.0,
+                train_eps=True
+            )
         elif conv_name == 'gat':
-            return GATConv(self.hidden_dim, self.hidden_dim, edge_dim=self.hidden_dim, concat=False)
+            return GATConv(self.hidden_dim_gnn, self.hidden_dim_gnn, edge_dim=self.hidden_dim_gnn, concat=False)
         elif conv_name == 'gen':
-            return GENConv(self.hidden_dim, self.hidden_dim)
+            return GENConv(self.hidden_dim_gnn, self.hidden_dim_gnn)
         else:
             raise ValueError(f"Unsupported conv_name: {conv_name}")
 
@@ -111,8 +147,8 @@ class GNN(nn.Module):
         """
         if pool == 'att':
             pool_fn = AttentionalAggregation(
-                gate_nn=nn.Sequential(nn.Linear(self.hidden_dim, 1)),
-                nn=nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim))
+                gate_nn=nn.Sequential(nn.Linear(self.hidden_dim_gnn, 1)),
+                nn=nn.Sequential(nn.Linear(self.hidden_dim_gnn, self.hidden_dim_gnn))
             )
         elif pool == 'mean':
             pool_fn = global_mean_pool
@@ -123,13 +159,36 @@ class GNN(nn.Module):
         elif pool == 'mean+att':
             pool_fn = global_mean_pool
             self.pool_fn_ucn = AttentionalAggregation(
-                gate_nn=nn.Sequential(nn.Linear(self.hidden_dim, 1)),
-                nn=nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim))
+                gate_nn=nn.Sequential(nn.Linear(self.hidden_dim_gnn, 1)),
+                nn=nn.Sequential(nn.Linear(self.hidden_dim_gnn, self.hidden_dim_gnn))
             )
         else:
             raise ValueError(f"Unsupported pool: {pool}")
         return pool, pool_fn
-        
+    
+    def _build_mlp(
+        self,
+        in_dim: int,
+        hidden_dims: list,
+        out_dim: int,
+        activation=nn.ReLU,
+        dropout: float = 0.0,
+        last_activation: bool = False,
+    ):
+        """
+        Build an MLP: in_dim -> hidden_dims... -> out_dim
+        By default: ReLU after each hidden layer, no activation after final layer.
+        """
+        dims = [in_dim] + list(hidden_dims) + [out_dim]
+        layers = []
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            is_last = (i == len(dims) - 2)
+            if (not is_last) or last_activation:
+                layers.append(activation())
+                if dropout > 0:
+                    layers.append(nn.Dropout(dropout))
+        return nn.Sequential(*layers)
 
     @overload
     def forward(self, data: torch.Tensor, is_pred = False):
@@ -157,10 +216,16 @@ class GNN(nn.Module):
         x = self.node_emb(x)
         edge_attr = self.edge_emb(edge_attr)
         for conv, batch_norm, relu in zip(self.convs, self.batch_norms, self.activations):
-            x = conv(x, edge_index, edge_attr)
+            name = conv.__class__.__name__
+            # Convs that use edge attributes:
+            if name in ["NNConv", "GINEConv", "GATConv"]:
+                x = conv(x, edge_index, edge_attr)
+            else:
+                # if name in GINConv, GENConv, GCNConv, SAGEConv, etc.
+                x = conv(x, edge_index)
             x = relu(batch_norm(x))
-        node_x = x
-        return node_x
+        return x
+
 
     @overload
     def get_graph_rep(self, data):
@@ -225,7 +290,7 @@ class GNN(nn.Module):
         """
         node_x = self.get_node_reps(data.x, data.edge_index, data.edge_attr, data.batch)
         bool_mask = torch.zeros(
-            data.mask.size(), dtype=torch.bool, device=data.x.device
+            data.mask.size(), dtype=torch.bool, device=DEVICE
         )
         bool_mask[sub] = 1
         masked_batch = data.batch[bool_mask]
@@ -233,11 +298,11 @@ class GNN(nn.Module):
         masked_bs = len(torch.unique(masked_batch))
         assert masked_bs == 1
         unique_batch = torch.zeros(
-            data.mask.size(), dtype=torch.long, device=data.x.device
+            data.mask.size(), dtype=torch.long, device=DEVICE
         )
         if masked_batch.numel() == 0:
             print("No elements in batch")
-            return torch.zeros(bs, self.num_classes).to(data.x.device)
+            return torch.zeros(bs, self.num_classes).to(DEVICE)
         if self.pool == "att":
             uncommon_graph_x = self.pool_fn.masked_forward(
                 node_x, bool_mask, unique_batch
@@ -267,7 +332,7 @@ class GNN(nn.Module):
         masked_bs = len(torch.unique(data.batch[bool_mask]))
 
         if masked_batch.numel() == 0:
-            return torch.zeros(bs, self.num_classes).to(data.x.device)
+            return torch.zeros(bs, self.num_classes).to(DEVICE)
 
         if self.pool == "att":
             uncommon_graph_x = self.pool_fn.masked_forward(
@@ -287,7 +352,7 @@ class GNN(nn.Module):
                 torch.unique(data.batch).cpu().numpy(),
                 torch.unique(data.batch[bool_mask]).cpu().numpy(),
             )
-            new_emb = torch.zeros(bs, self.num_classes).to(data.x.device)
+            new_emb = torch.zeros(bs, self.num_classes).to(DEVICE)
             new_emb[non_zeros_mask_idx] = uncommon_pred[non_zeros_mask_idx]
             uncommon_pred = new_emb
         return uncommon_pred
@@ -340,9 +405,9 @@ class GNN(nn.Module):
     def process_subgraph(self, node_x, bool_mask, masked_batch, bs, masked_bs, is_uncommon=True, is_pred=True):
         """Processes a subgraph to get its hidden representation."""
         if masked_batch.numel() == 0 and is_pred == True:
-            return torch.zeros(bs, self.num_classes).to(node_x.device)
+            return torch.zeros(bs, self.num_classes).to(DEVICE)
         elif masked_batch.numel() == 0 and is_pred == False:
-            return torch.zeros(bs, self.mask_dim).to(node_x.device)
+            return torch.zeros(bs, self.mask_dim).to(DEVICE)
 
         # Pooling and linear transformation
         if self.pool in ["att", "mean+att"]:
@@ -370,9 +435,9 @@ class GNN(nn.Module):
                 torch.unique(masked_batch).cpu().numpy(),
             )
             if is_pred:
-                new_emb = torch.zeros(bs, self.num_classes).to(node_x.device)
+                new_emb = torch.zeros(bs, self.num_classes).to(DEVICE)
             else:
-                new_emb = torch.zeros(bs, self.mask_dim).to(node_x.device)
+                new_emb = torch.zeros(bs, self.mask_dim).to(DEVICE)
             new_emb[non_zeros_mask_idx] = graph_pred[non_zeros_mask_idx]
             graph_pred = new_emb
 

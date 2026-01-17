@@ -1,3 +1,33 @@
+'''
+This main.py file realize these functions below:
+1. load preprocessed activity-cliff pair traing & testing datasets from data+preprocess/data/{kinase} using DataLoader.
+    Please first run ./data_preprocess/data_split.py to create train/test sets
+    
+2. Train GNN models & save model performance under various combination of loss settings and model settings:
+    (1) Loss_settings (basic loss + regularization):                                                           
+        a. MSE+UCN without group lasso                        
+        b. MSE+N without group lasso 
+        c. MSE+N with group lasso
+        d. MSE+N with sparse group lasso) 
+    (2) Model settings (GNN layers + Pooling layers): 
+        a. NNCov + Mean
+        b. GAT + Mean
+        c. GIN + Add
+3. Evaluate feature attribution performance via:
+    (1) Calculate accuarcy & F1 scores for local atom-level color labels (get_scores).
+    (2) Estimate global direction score (get_global_directions). 
+    (3) Additional interpretability metrics (Spearman + AUROC) + stability (e.g., sensitivity to graph perturbation).
+
+How to run:
+bash main.sh {cam|gradcam|gradinput|ig}
+
+Saving pathway:
+    # Model Performance: SAGGLR/logs/{kinase}}/{conv_pooling_settings}/{loss_settings}/.
+    # Model paramters: SAGGLR/logs/{kinase}}/{conv_pooling,settings}/{loss_settings}/.
+    # Color masks: SAGGLR/colors/feature_attribution/{kinase}}/{conv_pooling,settings}/{loss_settings}/.
+    # Feature attribution performance: SAGGLE/feature_attribution/{kinase}}/{conv_pooling,settings}/{loss_settings}/.
+
+'''
 import os
 import os.path as osp
 import time
@@ -8,7 +38,7 @@ import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch_geometric.data import DataLoader
+from torch_geometric.loader import DataLoader
 
 from SAGGLR.evaluation.explain_color import get_scores
 from SAGGLR.evaluation.explain_direction_global import get_global_directions
@@ -17,23 +47,59 @@ from SAGGLR.gnn_framework.model import GNN
 from SAGGLR.utils.parser_utils import overall_parser
 from SAGGLR.utils.train_utils import DEVICE, test_epoch, train_epoch
 from SAGGLR.utils.utils import get_num_features, get_colors, get_mcs, set_seed
+import matplotlib.pyplot as plt
+
+from SAGGLR.evaluation.attr_additional_metrics import (
+    run_and_save_additional_metrics,
+    run_and_save_perturbation_stability,
+)
+
 
 def main(args):
     set_seed(args.seed)
     torch.cuda.empty_cache()
-    
-    if args.regularization:
-        train_params = (
-            f"{args.conv}_{args.loss}_{args.pool}_{args.explainer}_hiddenDim_{args.hidden_dim}_GL_{args.lambda_group}"
-        )
-    else:
-        train_params = (
-            f"{args.conv}_{args.loss}_{args.pool}_{args.explainer}_hiddenDim_{args.hidden_dim}"
-        )
 
-    ##### Data loading and pre-processing #####
-    print(args.data_path)
-    print(args.result_path)
+    conv_pooling_settings = (f"{args.conv_main}_{args.pool_main}")
+    print(f"Conv & pooling layers used in training process: {conv_pooling_settings}")
+    print(f"Basic loss: {args.loss}")
+
+    if args.loss == "MSE+N":
+        if args.regularization:
+            if args.Sparse: # MSE+N+SGL
+                w_penalty_or_not = "w_sparse_group_lasso"
+                loss_settings = "MSE_N_SGL"
+                model_loss_settings = f"{conv_pooling_settings}_{loss_settings}"
+                train_params = (
+                    f"{model_loss_settings}_{args.explainer}_hiddenDim_{args.hidden_dim_gnn}_lambda_{args.lambda_group}"
+                )
+            else: # MSE+N+GL
+                w_penalty_or_not = "w_group_lasso"
+                loss_settings = "MSE_N_GL"
+                model_loss_settings = f"{conv_pooling_settings}_{loss_settings}"
+                train_params = (
+                    f"{model_loss_settings}_{args.explainer}_hiddenDim_{args.hidden_dim_gnn}_lambda_{args.lambda_group}"
+                )
+        else: # MSE+N
+            w_penalty_or_not = "wo_lasso"
+            loss_settings = "MSE_N"
+            model_loss_settings = f"{conv_pooling_settings}_{loss_settings}"
+            train_params = (
+                    f"{model_loss_settings}_{args.explainer}_hiddenDim_{args.hidden_dim_gnn}"
+                )
+    elif args.loss == "MSE+UCN": # MSE+UCN
+        w_penalty_or_not = "wo_lasso"
+        loss_settings = "MSE_UCN"
+        model_loss_settings = f"{conv_pooling_settings}_{loss_settings}"
+        train_params = (
+                f"{model_loss_settings}_{args.explainer}_hiddenDim_{args.hidden_dim_gnn}"
+            )
+    print(f"Train models with model & loss settings: {model_loss_settings}.")
+
+    
+    ############################################# 
+    ##### Data loading and pre-processing #######
+    ############################################# 
+    print(f"Data loading path: {args.data_path}")
 
     # Check that data exists
     file_train = osp.join(
@@ -45,9 +111,9 @@ def main(args):
 
     if not osp.exists(file_train) or not osp.exists(file_test):
         raise FileNotFoundError(
-            "Data not found. Please try to - choose another protein target or - run code/pair.py with a new seed."
+            "Data not found. Please try to choose another protein target"
         )
-
+    
     with open(file_train, "rb") as handle:
         trainval_dataset = dill.load(handle)
 
@@ -80,18 +146,24 @@ def main(args):
     )
     num_node_features, num_edge_features = get_num_features(train_dataset[0])
 
-    ##### GNN training #####
+
+    ############################################# 
+    ##### GNN training ##########################
+    ############################################# 
     model = GNN(
         num_node_features,
         num_edge_features,
-        hidden_dim=args.hidden_dim,
+        hidden_dim_embed = args.hidden_dim_embed, 
+        hidden_dim_gnn = args.hidden_dim_gnn,
+        hidden_dim_mlp = args.hidden_dim_mlp,
+        hidden_dim_linear = args.hidden_dim_linear,
         mask_dim=args.mask_dim,
         num_layers=args.num_layers,
-        conv_name=args.conv,
-        pool=args.pool,
+        conv_name=args.conv_main,
+        pool=args.pool_main,
     ).to(DEVICE)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr_main)
     scheduler = ReduceLROnPlateau(
         optimizer, mode="min", factor=0.8, patience=10, min_lr=1e-4
     )
@@ -104,9 +176,6 @@ def main(args):
     rmse_test_list = []
     pcc_test_list = []
     epoch_list = []
-    rmse_test_output = []
-    pcc_test_output = []
-    epoch_output =[]
 
     for epoch in range(1, args.epoch + 1):
 
@@ -125,7 +194,7 @@ def main(args):
             Sparse = args.Sparse,
         )
         
-        
+        # Adjust the learning rate based on validation performance
         rmse_val, pcc_val = test_epoch(val_loader, model)
         scheduler.step(rmse_val)
         if min_error is None or rmse_val <= min_error:
@@ -139,15 +208,12 @@ def main(args):
         pcc_test_list.append(pcc_test)
         epoch_list.append(epoch)
 
-        if epoch % args.verbose == 0:
+        if epoch % args.verbose == 10:
             print(
                 "Epoch{:4d}[{:.3f}s]: LR: {:.5f}, Loss: {:.5f}, Test Loss: {:.5f}, Test PCC: {:.5f}".format(
                     epoch, t3 - t1, lr, loss, rmse_test, pcc_test
                 )
             )
-            rmse_test_output.append(rmse_test)
-            pcc_test_output.append(pcc_test)
-            epoch_output.append(epoch)
             continue
 
         print(
@@ -175,45 +241,27 @@ def main(args):
         
     print("Final test rmse: {:.10f}".format(rmse_test))
     print("Final test pcc: {:.10f}".format(pcc_test))
-    rmse_test_output.append(rmse_test)
-    pcc_test_output.append(pcc_test)
-    epoch_output.append(epoch)
     best_rmse_test = min(rmse_test_list)
-    best_pcc_test = max(pcc_test_output)
+    best_pcc_test = max(pcc_test_list)
     best_epoch_rmse_test = epoch_list[rmse_test_list.index(best_rmse_test)]
     best_epoch_pcc_test = epoch_list[pcc_test_list.index(best_pcc_test)]
 
-    # Saving pathway:
-    # Model Performance: myfolder/logs/protein_name/w_penalty/.
-    # ModeL paramters: myfolder/logs/protein_name/w_penalty/.
-    # Color masks: myfolder/colors/feature_attr/protein_name/w_penalty/.
-    # Feature attribution performance: myfolder/feature_attr/protein_name/w_penalty/.
-
     # Save GNN scores
-    if args.regularization:
-        if args.Sparse:
-            folder_path = "w_sparse_group_lasso"
-        else:
-            folder_path = "w_group_lasso"
-    else:
-        folder_path = "wo_lasso"
-    print(folder_path)
-        
-    os.makedirs(osp.join(args.log_path, args.target, folder_path), exist_ok=True)
-    global_res_path = osp.join(
-        args.log_path, args.target, folder_path, f"model_scores_gnn_{train_params}.csv"
+    os.makedirs(osp.join(args.log_path, args.target, conv_pooling_settings, loss_settings), exist_ok=True)
+    model_res_path = osp.join(
+        args.log_path, args.target, conv_pooling_settings, loss_settings, f"model_scores_gnn_{train_params}.csv"
     )
     df = pd.DataFrame(
         [
             [
                 args.target,
                 args.seed,
-                args.conv,
-                args.pool,
+                args.conv_main,
+                args.pool_main,
                 args.loss,
                 args.lambda_group,
                 args.explainer,
-                folder_path,
+                loss_settings,
                 rmse_test,
                 pcc_test,
             ]
@@ -231,32 +279,35 @@ def main(args):
             "pcc_test",
         ],
     )
-    df.to_csv(global_res_path, index=False)
+    df.to_csv(model_res_path, index=False)
     
     ###### Save the model performance metrics on th test data
     model_metrics_path = osp.join(
-        args.log_path, args.target, folder_path, f"model_test_metrics_gnn_{train_params}.csv"
+        args.log_path, args.target, conv_pooling_settings, loss_settings, f"model_test_metrics_gnn_{train_params}.csv"
     )
     res_dict = {
-        "Epoch": epoch_output, 
-        "Test rmse": rmse_test_output,
-        "Test pcc": pcc_test_output,
+        "Epoch": epoch_list, 
+        "Test rmse": rmse_test_list,
+        "Test pcc": pcc_test_list,
         "Best epoch for rmse test": best_epoch_rmse_test,
         "Best test rmse": best_rmse_test,
         "Best epoch for pcc test": best_epoch_pcc_test,
         "Best test pcc": best_pcc_test,
     }
-    df = pd.DataFrame({key: pd.Series(value) for key, value in res_dict.items()})
-    df.to_csv(model_metrics_path, index=False)
+    res_df = pd.DataFrame({key: pd.Series(value) for key, value in res_dict.items()})
+    res_df.to_csv(model_metrics_path, index=False)
+    print(f"Model performance metrics on th test data saved to: {model_metrics_path}")
     
     ##### Save the model
     model_path = osp.join(
-        args.log_path, args.target, folder_path, f"model_{train_params}.pth"
+        args.log_path, args.target, conv_pooling_settings, loss_settings, f"model_{train_params}.pth"
     )
     torch.save(model, model_path)
     
 
+    ############################################# 
     ##### Feature Attribution #####
+    #############################################
     model.eval()
 
     if args.explainer == "gradinput":
@@ -276,16 +327,16 @@ def main(args):
     test_colors = get_colors(test_dataset, explainer)
 
     # Save colors
-    os.makedirs(osp.join(args.color_path, args.explainer, args.target, folder_path), exist_ok=True)
+    os.makedirs(osp.join(args.color_path, args.explainer, args.target, conv_pooling_settings, loss_settings), exist_ok=True)
     with open(
         osp.join(
             args.color_path,
             args.explainer,
             args.target,
-            folder_path,
+            conv_pooling_settings,
+            loss_settings,
             f"{args.target}_seed_{args.seed}_{train_params}_train.pt",
-        ),
-        "wb",
+        ), "wb",
     ) as handle:
         dill.dump(train_colors, handle)
     with open(
@@ -293,10 +344,10 @@ def main(args):
             args.color_path,
             args.explainer,
             args.target,
-            folder_path,
+            conv_pooling_settings,
+            loss_settings,
             f"{args.target}_seed_{args.seed}_{train_params}_test.pt",
-        ),
-        "wb",
+        ), "wb",
     ) as handle:
         dill.dump(test_colors, handle)
 
@@ -308,9 +359,9 @@ def main(args):
     )
     global_dir_test = get_global_directions(test_dataset, test_colors, set="test")
 
-    os.makedirs(osp.join(args.result_path, args.explainer, args.target, folder_path), exist_ok=True)
+    os.makedirs(osp.join(args.feature_attri_path, args.explainer, args.target, conv_pooling_settings, loss_settings), exist_ok=True)
     global_res_path = osp.join(
-        args.result_path, args.explainer, args.target, folder_path, f"attr_scores_{train_params}_{args.target}.csv"
+        args.feature_attri_path, args.explainer, args.target, conv_pooling_settings, loss_settings, f"attr_scores_{train_params}_{args.target}.csv"
     )
 
     accs_train, f1s_train = (
@@ -333,12 +384,12 @@ def main(args):
     res_dict = {
         "target": [args.target] * 10,
         "seed": [args.seed] * 10,
-        "conv": [args.conv] * 10,
-        "pool": [args.pool] * 10,
+        "conv": [args.conv_main] * 10,
+        "pool": [args.pool_main] * 10,
         "loss": [args.loss] * 10,
         "lambda1": [args.lambda1] * 10,
         "explainer": [args.explainer] * 10,
-        "penalty": [folder_path] * 10,
+        "penalty": [w_penalty_or_not] * 10,
         "time": [round(time_explainer, 4)] * 10,
         "acc_train": accs_train,
         "acc_test": accs_test,
@@ -352,14 +403,50 @@ def main(args):
     }
     df = pd.DataFrame({key: pd.Series(value) for key, value in res_dict.items()})
     df.to_csv(global_res_path, index=False)
-    torch.cuda.empty_cache()
+    print(f"metrics saved to: {global_res_path}")
 
+    ################################################################################################################
+    # Additional interpretability metrics (Spearman + AUROC) + stability (e.g., sensitivity to graph perturbation)
+    ################################################################################################################
+    extra_out_dir = osp.join(args.feature_attri_path, args.explainer, args.target, conv_pooling_settings, loss_settings, "additional_metrics")
+    os.makedirs(extra_out_dir, exist_ok=True)
+
+    # Train/val pooled set (trainval_dataset) + test set
+    _ = run_and_save_additional_metrics(
+        pairs_list=trainval_dataset,
+        colors=train_colors,
+        out_dir=extra_out_dir,
+        prefix=f"{args.target}_seed_{args.seed}_{train_params}_train",
+    )
+    _ = run_and_save_additional_metrics(
+        pairs_list=test_dataset,
+        colors=test_colors,
+        out_dir=extra_out_dir,
+        prefix=f"{args.target}_seed_{args.seed}_{train_params}_test",
+    )
+    print(f"Spearman + AUROC results saved to: {extra_out_dir}")
+
+    # ===== Perturbation stability (edge-drop) =====
+    # Uses the same explainer object you already created (GradInput / IG / CAM / GradCAM)
+    stability_out_dir = osp.join(extra_out_dir, "perturbation_stability")
+    os.makedirs(stability_out_dir, exist_ok=True)
+
+    _ = run_and_save_perturbation_stability(
+        pairs_list=test_dataset,
+        explainer=explainer,
+        out_dir=stability_out_dir,
+        prefix=f"{args.target}_seed_{args.seed}_{train_params}_test",
+        drop_list=[0.0, 0.05, 0.1, 0.2, 0.3],
+        n_repeats=3,
+        base_seed=args.seed,
+    )
+    print(f"Perturbation stability results saved to: {stability_out_dir}")
 
 if __name__ == "__main__":
 
     parser = overall_parser()
     args = parser.parse_args()
 
-    for loss in ["MSE+N", "MSE", "MSE+AC"]:
+    for loss in ["MSE+N", "MSE+UCN"]:
         args.loss = loss
         main(args)

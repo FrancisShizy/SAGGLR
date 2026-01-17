@@ -1,6 +1,6 @@
 import argparse
 
-from SAGGLR.path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, RESULT_PATH, CV_PATH
+from SAGGLR.path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, FEATURE_ATTRI_PATH, CV_PATH, CV_PATH_TEST
 
 
 # Parse train only at the beginning in train_gnn.py
@@ -10,7 +10,7 @@ def overall_parser():
     parser = argparse.ArgumentParser(description="Train GNN Model")
 
     parser.add_argument("--cuda", type=int, default=0, help="GPU device.")
-    parser.add_argument("--seed", type=int, default=123, help="seed")
+    parser.add_argument("--seed", type=int, default=1337, help="seed")
 
     # Saving paths
     parser.add_argument(
@@ -35,6 +35,12 @@ def overall_parser():
         help="path for saving cross-validation results (rmse, pcc).",
     )
     parser.add_argument(
+        "--cv_path_test",
+        nargs="?",
+        default=CV_PATH_TEST,
+        help="path for saving cross-validation test method results (rmse, pcc).",
+    )
+    parser.add_argument(
         "-color_path",
         nargs="?",
         default=COLOR_PATH,
@@ -42,9 +48,9 @@ def overall_parser():
     )
 
     parser.add_argument(
-        "--result_path",
+        "--feature_attri_path",
         nargs="?",
-        default=RESULT_PATH,
+        default=FEATURE_ATTRI_PATH,
         help="path for saving the feature attribution scores (accs, f1s).",
     )
 
@@ -58,10 +64,28 @@ def overall_parser():
         "--num_layers", type=int, default=3, help="number of Convolution layers(units)"
     )
     parser.add_argument(
-        "--hidden_dim",
+        "--hidden_dim_linear",
         type=int,
         default=32,
-        help="number of neurons in first hidden layer",
+        help="number of neurons in hidden layer for linear layers",
+    )
+    parser.add_argument(
+        "--hidden_dim_embed",
+        type=int,
+        default=32,
+        help="number of neurons in hidden layer for embedding layers",
+    )
+    parser.add_argument(
+        "--hidden_dim_gnn",
+        type=int,
+        default=32,
+        help="number of neurons in hidden layer for GNN layers",
+    )
+    parser.add_argument(
+        "--hidden_dim_mlp",
+        type=list,
+        default=[32,16],
+        help="number of neurons in first hidden layer of MLP",
     )
     parser.add_argument(
         "--mask_dim",
@@ -70,16 +94,32 @@ def overall_parser():
         help="number of neurons in mask layer",
     )
     parser.add_argument(
-        "--conv", type=str, default="nn", help="Type of convolutional layer." # Type of graph convolution ('nn', 'gine', 'gat', 'gen')
+        "--conv", type=str, default="gat", help="Type of convolutional layer." # Type of graph convolution ('nn', 'gin', 'gine', 'gat', 'gen')
     )  
     parser.add_argument(
         "--pool", type=str, default="mean", help="pool strategy." # Global pooling method ('mean', 'max', 'add', 'att', 'mean+att').
     )  
+    parser.add_argument(
+        "--conv_main", type=str, default="nn", help="Type of convolutional layer." # Type of graph convolution ('nn', 'gin', 'gine', 'gat', 'gen')
+    )  
+    parser.add_argument(
+        "--pool_main", type=str, default="mean", help="pool strategy." # Global pooling method ('mean', 'max', 'add', 'att', 'mean+att').
+    )  
+    '''
+    Practical recommendation matrix (DPI-specific):
+    Goal / Setting                      Best Choice
+    Strong baseline                     GCN + mean
+    Functional-group driven binding     GIN + add
+    Chemically faithful modeling        GINE + add
+    Hotspot-driven binding              GAT + mean / att
+    Bond-sensitive interactions         NNConv + add
+    Deep / large-molecule modeling      GENConv + add
+    '''
 
     # Loss type
     parser.add_argument(
         "--loss", type=str, default="MSE", help="Type of loss for training GNN."
-    )  # ['MSE', 'MSE+UCN']
+    )  # ['MSE', 'MSE+UCN', 'MSE+N']
     parser.add_argument(
         "--lambda1",
         type=float,
@@ -126,11 +166,14 @@ def overall_parser():
     parser.add_argument(
         "--loss_setting_list", type=int, default=["MSE", "MSE+UCN", "MSE+N", "MSE+AC"], help="Loss setting list for cross-validation comparation"
     )
-
+    parser.add_argument(
+        "--cv_scaffold_analysis_root", type=str, default="cross_validation_test", help="where to save CV scaffold analysis"
+    )
 
     # GNN training parameters
-    parser.add_argument("--epoch", type=int, default=300, help="Number of epoch.")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate.")
+    parser.add_argument("--epoch", type=int, default=500, help="Number of epoch.")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+    parser.add_argument("--lr_main", type=float, default=5e-4, help="Learning rate.")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
     parser.add_argument(
         "--verbose", type=int, default=10, help="Interval of evaluation."

@@ -1,5 +1,5 @@
 from functools import wraps
-
+import sys
 import numpy as np
 import torch
 from torch import nn
@@ -7,11 +7,9 @@ from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from SAGGLR.gnn_framework.loss import loss_uncommon_node, loss_common_node, lasso_regular_penalty, loss_node_with_group_lasso, loss_node_local, loss_node_with_sparse_group_lasso
-
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+from SAGGLR.utils.device import DEVICE
 
 MSE_LOSS_FN = nn.MSELoss()
-
 
 def train_epoch(
     train_loader: DataLoader,
@@ -35,9 +33,8 @@ def train_epoch(
     progress = tqdm(train_loader)
     total = 0
     for hetero_data in progress:
-        data_i, data_j = Batch().from_data_list(
-            hetero_data["data_i"]
-        ), Batch().from_data_list(hetero_data["data_j"])
+        data_i = Batch().from_data_list(hetero_data["data_i"])
+        data_j = Batch().from_data_list(hetero_data["data_j"])
         optimizer.zero_grad()
         data_i, data_j = data_i.to(DEVICE), data_j.to(DEVICE)
         out_i, out_j = torch.squeeze(model(data_i)), torch.squeeze(model(data_j))
@@ -110,28 +107,18 @@ def test_epoch(test_loader: DataLoader, model: nn.Module):
     model.eval()
     error = 0
     pcc = 0
-
     with torch.no_grad():
         k = 0
         for hetero_data in test_loader:
-            data_i, data_j = Batch().from_data_list(hetero_data["data_i"]).to(
-                DEVICE
-            ), Batch().from_data_list(hetero_data["data_j"]).to(DEVICE)
+            data_i = Batch().from_data_list(hetero_data["data_i"]).to(DEVICE)
+            data_j = Batch().from_data_list(hetero_data["data_j"]).to(DEVICE)
             out_i, out_j = model(data_i), model(data_j)
-            rmse_i = torch.sqrt(
-                MSE_LOSS_FN(torch.squeeze(out_i).detach(), data_i.y)
-            ).item()
-            rmse_j = torch.sqrt(
-                MSE_LOSS_FN(torch.squeeze(out_j).detach(), data_j.y)
-            ).item()
+            rmse_i = torch.sqrt(MSE_LOSS_FN(torch.squeeze(out_i).detach(), data_i.y)).item()
+            rmse_j = torch.sqrt(MSE_LOSS_FN(torch.squeeze(out_j).detach(), data_j.y)).item()
             error += (rmse_i + rmse_j) / 2 * hetero_data.num_graphs
 
-            pcc_i = np.corrcoef(
-                torch.squeeze(out_i).cpu().numpy(), data_i.y.cpu().numpy()
-            )[0, 1]
-            pcc_j = np.corrcoef(
-                torch.squeeze(out_j).cpu().numpy(), data_j.y.cpu().numpy()
-            )[0, 1]
+            pcc_i = np.corrcoef(torch.squeeze(out_i).cpu().numpy(), data_i.y.cpu().numpy())[0, 1]
+            pcc_j = np.corrcoef(torch.squeeze(out_j).cpu().numpy(), data_j.y.cpu().numpy())[0, 1]
             if np.isnan(pcc_i) | np.isnan(pcc_j):
                 try:
                     k += 1
