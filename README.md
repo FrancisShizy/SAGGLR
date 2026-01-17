@@ -10,6 +10,9 @@ Structure-Aware Compound-Protein Affinity Prediction via Graph Neural Network wi
 # How to use
 The data used in this paper is from this benchmark study, please see: https://github.com/josejimenezluna/xaibench_tf
 
+For model training and feature attribution, please run:
 ```ruby
 bash main.sh {cam | gradcam | gradinput | ig}
 ```
+
+The configurations can be changed in ./SAGGLR/utils/parser_utils.py
