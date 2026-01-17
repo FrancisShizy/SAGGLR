@@ -1,6 +1,6 @@
 import argparse
 
-from path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, FEATURE_ATTRI_PATH, CV_PATH, CV_PATH_TEST
+from SAGGLR.path import COLOR_PATH, DATA_PATH, LOG_PATH, MODEL_PATH, FEATURE_ATTRI_PATH, CV_PATH, CV_PATH_TEST
 
 
 # Parse train only at the beginning in train_gnn.py
