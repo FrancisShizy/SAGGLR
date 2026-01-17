@@ -8,6 +8,8 @@ Structure-Aware Compound-Protein Affinity Prediction via Graph Neural Network wi
 **Results:** We applied this framework to activity cliff data of molecules targeting three proto-oncogene tyrosine-protein kinase Src proteins (PDB IDs: 1O42, 2H8H, 4MXO). Integrating common and uncommon node information with sparse group lasso improves molecular property prediction for specific protein targets, as evidenced by lower root mean squared error (RMSE) and higher Pearson’s correlation coefficient (PCC). Applying regularizations also enhances feature attribution for GNNs by boosting graph-level global direction scores and improving atom-level coloring accuracy. These advances strengthen model interpretability in drug discovery pipelines, particularly in identifying critical molecular substructures in lead optimization.
 
 # How to use
+The data used in this paper is from this benchmark study, please see: https://github.com/josejimenezluna/xaibench_tf
+
 ```ruby
 bash main.sh {cam | gradcam | gradinput | ig}
 ```
