@@ -182,7 +182,7 @@ def main_cv(args):
 
             optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
             scheduler = ReduceLROnPlateau(
-                optimizer, mode="min", factor=0.8, patience=10, min_lr=1e-4
+                optimizer, mode="min", factor=0.8, patience=10, min_lr=1e-5
             )
 
             # Early stopping
@@ -191,6 +191,8 @@ def main_cv(args):
             trigger_times = 0
             rmse_test_list = []
             pcc_test_list = []
+            rmse_delta_test_list = []
+            pcc_delta_test_list = []
             epoch_list = []
             final_epoch = 0
 
@@ -201,23 +203,24 @@ def main_cv(args):
                     model,
                     optimizer,
                     loss_type=train_loss,
-                    lambda1=args.lambda1,
+                    lambda_ucn=args.lambda_ucn,
+                    lambda_cn=args.lambda_cn,
                     lambda_group = args.lambda_group,
                     lambda_MSE = args.lambda_MSE,
                     regularization = train_reg,
                     Sparse = train_reg_sparse,
                 )
 
-                rmse_val, pcc_val = test_epoch(val_dataloader, model)
+                rmse_val, pcc_val, rmse_delta_val, pcc_delta_val = test_epoch(val_dataloader, model)
 
                 # drive LR by validation performance
                 scheduler.step(rmse_val)
                 current_lr = scheduler.optimizer.param_groups[0]["lr"]
 
-                rmse_test, pcc_test = test_epoch(test_dataloader, model)
+                rmse_test, pcc_test, rmse_delta_test, pcc_delta_test  = test_epoch(test_dataloader, model)
                 
                 # Early stopping
-                if epoch > 200:
+                if epoch > 300:
                     if loss > last_loss:
                         trigger_times += 1
                         print("Trigger Times:", trigger_times)
@@ -233,41 +236,60 @@ def main_cv(args):
                 last_loss = loss
                 rmse_test_list.append(rmse_test)
                 pcc_test_list.append(pcc_test)
+                rmse_delta_test_list.append(rmse_delta_test)
+                pcc_delta_test_list.append(pcc_delta_test)
                 epoch_list.append(epoch)
                 
             final_test_rmse = rmse_test
             final_test_pcc = pcc_test
+            final_test_rmse_delta = rmse_delta_test
+            final_test_pcc_delta = pcc_delta_test
             best_rmse_test = min(rmse_test_list)
             best_pcc_test = max(pcc_test_list)
+            best_rmse_delta_test = min(rmse_delta_test_list)
+            best_pcc_delta_test = max(pcc_delta_test_list)
             best_epoch_rmse_test = epoch_list[rmse_test_list.index(best_rmse_test)]
             best_epoch_pcc_test = epoch_list[pcc_test_list.index(best_pcc_test)]
+            best_epoch_rmse_delta_test = epoch_list[rmse_delta_test_list.index(best_rmse_delta_test)]
+            best_epoch_pcc_delta_test = epoch_list[pcc_delta_test_list.index(best_pcc_delta_test)]
 
             loss_metrics[setting_name].append({
                   'final_rmse': final_test_rmse,
                   'final_pcc': final_test_pcc,
+                  'final_rmse_delta': final_test_rmse_delta,
+                  'final_pcc_delta': final_test_pcc_delta,
                   'best_rmse': best_rmse_test,
-                  'best_pcc': best_pcc_test
+                  'best_pcc': best_pcc_test,
+                  'best_rmse_delta': best_rmse_delta_test,
+                  'best_pcc_delta': best_pcc_delta_test
                 })
 
             ###### Save the model performance metrics on th test data
                 
-            os.makedirs("cross_validation_test", exist_ok=True)
-            os.makedirs(osp.join("cross_validation_test", args.cv_path_test), exist_ok=True)
-            os.makedirs(osp.join("cross_validation_test", args.cv_path_test, args.target), exist_ok=True)
-            os.makedirs(osp.join("cross_validation_test", args.cv_path_test, args.target, f"{args.conv}_{args.pool}"), exist_ok=True)
-            os.makedirs(osp.join("cross_validation_test", args.cv_path_test, args.target, f"{args.conv}_{args.pool}", folder_path), exist_ok=True)
-            model_metrics_path = osp.join("cross_validation_test",
-                args.cv_path_test, args.target, f"{args.conv}_{args.pool}", folder_path, f"model_test_metrics_gnn_fold_{fold}_{args.conv}_{setting_name}_pool_{args.pool}_hiddenDim_{args.hidden_dim_linear}_finalEpoch_{final_epoch}.csv"
+            os.makedirs(args.cv_path_test, exist_ok=True)
+            os.makedirs(osp.join(args.cv_path_test, args.target), exist_ok=True)
+            os.makedirs(osp.join(args.cv_path_test, args.target, f"{args.conv}_{args.pool}"), exist_ok=True)
+            os.makedirs(osp.join(args.cv_path_test, args.target, f"{args.conv}_{args.pool}", folder_path), exist_ok=True)
+            model_metrics_path = osp.join(args.cv_path_test, args.target, 
+                                          f"{args.conv}_{args.pool}", 
+                                          folder_path, 
+                                          f"model_test_metrics_gnn_fold_{fold}_{args.conv}_{setting_name}_pool_{args.pool}_hiddenDim_{args.hidden_dim_linear}_finalEpoch_{final_epoch}.csv"
             )
-            print(f"Saved folder: cross_validation_test/{args.cv_path_test}{args.target}/{args.conv}_{args.pool}/{folder_path}")
+            print(f"Saved folder:{args.cv_path_test}{args.target}/{args.conv}_{args.pool}/{folder_path}")
             res_dict = {
                 "Epoch": epoch_list, 
                 "Final test rmse": rmse_test_list,
                 "Final test pcc": pcc_test_list,
+                "Final test rmse delta": rmse_delta_test_list,
+                "Final test pcc delta": pcc_delta_test_list,
                 "Best epoch for rmse test": best_epoch_rmse_test,
                 "Best test rmse": best_rmse_test,
-                "Best epoch for pcc test": best_epoch_pcc_test,
+                "Best epoch for test rmse delta": best_epoch_rmse_delta_test,
+                "Best test rmse delta": best_rmse_delta_test,
+                "Best epoch for test pcc": best_epoch_pcc_test,
                 "Best test pcc": best_pcc_test,
+                "Best epoch for test pcc delta": best_epoch_pcc_delta_test,
+                "Best test pcc delta": best_pcc_delta_test,
             }
             df = pd.DataFrame({key: pd.Series(value) for key, value in res_dict.items()})
             df.to_csv(model_metrics_path, index=False)
@@ -296,7 +318,7 @@ def main_cv(args):
         })
         
     df_summary = pd.DataFrame(rows)
-    out_csv = f"cross_validation_test/{args.target}/{args.conv}_{args.pool}/loss_cv_performance_hiddenDim_{args.hidden_dim_linear}_topEpoch_{args.epoch}.csv"
+    out_csv = f"{args.cv_path_test}/{args.target}/{args.conv}_{args.pool}/loss_cv_performance_hiddenDim_{args.hidden_dim_linear}_topEpoch_{args.epoch}.csv"
     df_summary.to_csv(out_csv, index=False)
     print(f"\nSaved cross-validation summary to {out_csv}\n")
     

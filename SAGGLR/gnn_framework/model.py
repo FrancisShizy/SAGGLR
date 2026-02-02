@@ -375,10 +375,10 @@ class GNN(nn.Module):
             data (torch.Tensor): data object containing the graph
 
         Returns:
-            1. If hope to combine both information of uncommon and common subgraphs, output the mask 
+            1. If hope to combine both information of uncommon and common subgraphs (is_pred = False), output the mask 
             Tuple[torch.Tensor, torch.Tensor]: hidden representations of the uncommon and common parts of the molecule
             
-            2. If output the seperated prediction of uncommon and common subgraphs:
+            2. If output the seperated prediction of uncommon and common subgraphs (is_pred = True):
             Tuple[torch.Tensor, torch.Tensor]: hidden representations of the uncommon and common parts of the molecule
         """
         node_x = self.get_node_reps(data.x, data.edge_index, data.edge_attr, data.batch)

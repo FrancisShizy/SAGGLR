@@ -32,7 +32,7 @@ def loss_uncommon_node(
     return loss
 
 
-def loss_common_node(data_i: Tensor, data_j: Tensor, model: nn.Module, reduction: str="mean") -> Tensor:
+def loss_common_node(data_i: Tensor, data_j: Tensor, model: nn.Module, lambda_cn, lambda_ucn, reduction: str="mean") -> Tensor:
     """
     compute the loss that coreelates both common and uncommon decoration embeddings with the activity cliff.
     """
@@ -57,7 +57,7 @@ def loss_common_node(data_i: Tensor, data_j: Tensor, model: nn.Module, reduction
     loss_common = F.mse_loss(delta_emb_common, delta_y, reduction=reduction)
 
     # Combine the losses.
-    loss = loss_uncommon + loss_common 
+    loss = lambda_ucn*loss_uncommon + lambda_cn*loss_common 
     
     return loss
 
@@ -80,7 +80,7 @@ def lasso_regular_penalty(model, param_name):
     lasso_reg = torch.tensor(0.).to(DEVICE)
     for name, param in model.named_parameters():
         if name in param_name:
-            lasso_reg += torch.norm(param, 1)
+            lasso_reg += torch.linalg.norm(param, ord=1)
     return lasso_reg
 
 
@@ -93,7 +93,7 @@ def group_lasso_penalty(model, group_params, lambda_group_lasso):
                 pl = torch.tensor(param.size(1), dtype=torch.float).to(DEVICE)
             else:
                 pl = torch.tensor(param.size(0), dtype=torch.float).to(DEVICE)
-            penalty += pl.sqrt() * torch.norm(param, p=2)
+            penalty += pl.sqrt() * torch.linalg.norm(param, ord=2)
     return lambda_group_lasso * penalty
 
 
@@ -105,11 +105,11 @@ def sparse_group_lasso_penalty(model, group_params, lambda_group_lasso, alpha):
                 pl = torch.tensor(param.size(1), dtype=torch.float).to(DEVICE)
             else:
                 pl = torch.tensor(param.size(0), dtype=torch.float).to(DEVICE)
-            penalty += (1-alpha) * lambda_group_lasso * torch.sqrt(pl) * torch.norm(param, 2)  # L2 penalty
+            penalty += (1-alpha) * lambda_group_lasso * torch.sqrt(pl) * torch.linalg.norm(param, ord=2)  # L2 penalty
     return penalty
 
 
-def loss_node_with_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module, lambda_group_lasso, 
+def loss_node_with_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module, lambda_cn, lambda_ucn, lambda_group_lasso, 
                                common_group_params, uncommon_group_params, reduction: str="mean") -> Tensor:
     """
     compute the loss that coreelates both common and uncommon decoration embeddings with the activity cliff.
@@ -131,20 +131,21 @@ def loss_node_with_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module,
     delta_y = data_i.y - data_j.y
     
     # Compute the loss for both uncommon and common representations.
-    loss_uncommon = F.mse_loss(delta_emb_uncommon, delta_y, reduction=reduction)
-    loss_common = F.mse_loss(delta_emb_common, delta_y, reduction=reduction)
+    # loss_uncommon = F.mse_loss(delta_emb_uncommon, delta_y, reduction=reduction)
+    # loss_common = F.mse_loss(delta_emb_common, delta_y, reduction=reduction)
+    loss_node = F.mse_loss(lambda_cn*delta_emb_common + lambda_ucn*delta_emb_uncommon, delta_y, reduction=reduction)
     
     # Compute the group lasso penalties.
     group_lasso_common = group_lasso_penalty(model, common_group_params, lambda_group_lasso)
     group_lasso_uncommon = group_lasso_penalty(model, uncommon_group_params, lambda_group_lasso)
 
     # Combine the losses.
-    loss = loss_uncommon + loss_common + group_lasso_common + group_lasso_uncommon
+    loss = loss_node + group_lasso_common + group_lasso_uncommon
     
     return loss
 
 
-def loss_node_with_sparse_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module, lambda_group_lasso,
+def loss_node_with_sparse_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.Module, lambda_cn, lambda_ucn, lambda_group_lasso,
                                       common_group_params, uncommon_group_params, alpha, reduction: str="mean") -> Tensor:
     """
     compute the loss that coreelates both common and uncommon decoration embeddings with the activity cliff.
@@ -166,15 +167,16 @@ def loss_node_with_sparse_group_lasso(data_i: Tensor, data_j: Tensor, model: nn.
     delta_y = data_i.y - data_j.y
     
     # Compute the loss for both uncommon and common representations.
-    loss_uncommon = F.mse_loss(delta_emb_uncommon, delta_y, reduction=reduction)
-    loss_common = F.mse_loss(delta_emb_common, delta_y, reduction=reduction)
+    # loss_uncommon = F.mse_loss(delta_emb_uncommon, delta_y, reduction=reduction)
+    # loss_common = F.mse_loss(delta_emb_common, delta_y, reduction=reduction)
+    loss_node = F.mse_loss(lambda_cn*delta_emb_common + lambda_ucn*delta_emb_uncommon, delta_y, reduction=reduction)
     
     # Compute the group lasso penalties.
     sparse_group_lasso_common = sparse_group_lasso_penalty(model, common_group_params, lambda_group_lasso, alpha)
     sparse_group_lasso_uncommon = sparse_group_lasso_penalty(model, uncommon_group_params, lambda_group_lasso, alpha)
 
     # Combine the losses (you might want to weigh them differently)
-    loss = loss_uncommon + loss_common + sparse_group_lasso_common + sparse_group_lasso_uncommon
+    loss = loss_node + sparse_group_lasso_common + sparse_group_lasso_uncommon
     
     return loss
      

@@ -1,8 +1,6 @@
 '''
 This main.py file realize these functions below:
 1. load preprocessed activity-cliff pair traing & testing datasets from data+preprocess/data/{kinase} using DataLoader.
-    Please first run ./data_preprocess/data_split.py to create train/test sets
-    
 2. Train GNN models & save model performance under various combination of loss settings and model settings:
     (1) Loss_settings (basic loss + regularization):                                                           
         a. MSE+UCN without group lasso                        
@@ -187,7 +185,8 @@ def main(args):
             model,
             optimizer,
             loss_type=args.loss,
-            lambda1=args.lambda1,
+            lambda_cn=args.lambda_cn,
+            lambda_ucn=args.lambda_ucn,
             lambda_group = args.lambda_group,
             lambda_MSE = args.lambda_MSE,
             regularization = args.regularization,
@@ -387,7 +386,8 @@ def main(args):
         "conv": [args.conv_main] * 10,
         "pool": [args.pool_main] * 10,
         "loss": [args.loss] * 10,
-        "lambda1": [args.lambda1] * 10,
+        #"lambda_cn": [args.lambda_cn] * 10,
+        #"lambda_ucn": [args.lambda_ucn] * 10,
         "explainer": [args.explainer] * 10,
         "penalty": [w_penalty_or_not] * 10,
         "time": [round(time_explainer, 4)] * 10,
